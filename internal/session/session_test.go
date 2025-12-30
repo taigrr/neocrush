@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/taigrr/crush-lsp/internal/session"
+	"github.com/taigrr/neocrush/internal/session"
 )
 
 func TestGenerateSessionID(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/taigrr/crush-lsp/rpc"
+	"github.com/taigrr/neocrush/rpc"
 )
 
 // Transport represents a bidirectional LSP transport.

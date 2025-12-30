@@ -9,13 +9,13 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/taigrr/crush-lsp/internal/protocol"
-	"github.com/taigrr/crush-lsp/internal/session"
-	"github.com/taigrr/crush-lsp/internal/state"
-	"github.com/taigrr/crush-lsp/internal/transport"
+	"github.com/taigrr/neocrush/internal/protocol"
+	"github.com/taigrr/neocrush/internal/session"
+	"github.com/taigrr/neocrush/internal/state"
+	"github.com/taigrr/neocrush/internal/transport"
 )
 
-// Daemon manages the crush-lsp daemon process.
+// Daemon manages the neocrush daemon process.
 type Daemon struct {
 	sessionManager *session.Manager
 	logger         *log.Logger

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/taigrr/crush-lsp/internal/session"
-	"github.com/taigrr/crush-lsp/rpc"
+	"github.com/taigrr/neocrush/internal/session"
+	"github.com/taigrr/neocrush/rpc"
 )
 
 var version = "0.2.7"
@@ -30,7 +30,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("crush-lsp version %s\n", version)
+		fmt.Printf("neocrush version %s\n", version)
 		return
 	}
 
@@ -449,7 +449,7 @@ func (d *Daemon) handleInitialize(msg []byte, conn net.Conn) (string, error) {
 				},
 			},
 			"serverInfo": map[string]any{
-				"name":    "crush-lsp",
+				"name":    "neocrush",
 				"version": version,
 			},
 		},
@@ -1040,10 +1040,10 @@ func bridgeConnections(stdin io.Reader, stdout io.Writer, conn net.Conn, logger 
 }
 
 func printUsage() {
-	fmt.Println(`crush-lsp - LSP/MCP multiplexed server for Crush and Neovim
+	fmt.Println(`neocrush - LSP/MCP multiplexed server for Crush and Neovim
 
 USAGE:
-    crush-lsp [OPTIONS]
+    neocrush [OPTIONS]
 
 OPTIONS:
     --log FILE    Log file path
@@ -1070,14 +1070,14 @@ MCP TOOLS:
                       and active file from Neovim
 
 CONFIGURATION:
-    Neovim: Add to LSP config with cmd = { "crush-lsp" }
-    Crush:  Add to crush.json lsp section with command = "crush-lsp"
-    MCP:    Add to mcp config with command = "crush-lsp"
+    Neovim: Add to LSP config with cmd = { "neocrush" }
+    Crush:  Add to crush.json lsp section with command = "neocrush"
+    MCP:    Add to mcp config with command = "neocrush"
 
 FILES:
     .crush/session              Session info (in workspace root)
-    $XDG_RUNTIME_DIR/crush-lsp/ Sockets (Linux)
-    $TMPDIR/crush-lsp-$UID/     Sockets (macOS)`)
+    $XDG_RUNTIME_DIR/neocrush/ Sockets (Linux)
+    $TMPDIR/neocrush-$UID/     Sockets (macOS)`)
 }
 
 func getLogger(path string) *log.Logger {
@@ -1086,18 +1086,18 @@ func getLogger(path string) *log.Logger {
 	}
 	if path == "" {
 		// Default to stderr for client, let daemon set its own
-		return log.New(os.Stderr, "[crush-lsp] ", log.Ldate|log.Ltime|log.Lshortfile)
+		return log.New(os.Stderr, "[neocrush] ", log.Ldate|log.Ltime|log.Lshortfile)
 	}
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return log.New(os.Stderr, "[crush-lsp] ", log.Ldate|log.Ltime|log.Lshortfile)
+		return log.New(os.Stderr, "[neocrush] ", log.Ldate|log.Ltime|log.Lshortfile)
 	}
 
 	logfile, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
-		return log.New(os.Stderr, "[crush-lsp] ", log.Ldate|log.Ltime|log.Lshortfile)
+		return log.New(os.Stderr, "[neocrush] ", log.Ldate|log.Ltime|log.Lshortfile)
 	}
 
-	return log.New(logfile, "[crush-lsp] ", log.Ldate|log.Ltime|log.Lshortfile)
+	return log.New(logfile, "[neocrush] ", log.Ldate|log.Ltime|log.Lshortfile)
 }

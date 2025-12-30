@@ -7,9 +7,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/taigrr/crush-lsp/analysis"
-	"github.com/taigrr/crush-lsp/lsp"
-	"github.com/taigrr/crush-lsp/rpc"
+	"github.com/taigrr/neocrush/analysis"
+	"github.com/taigrr/neocrush/lsp"
+	"github.com/taigrr/neocrush/rpc"
 )
 
 func main() {
@@ -154,5 +154,5 @@ func getLogger(filename string) *log.Logger {
 		panic("hey, you didnt give me a good file")
 	}
 
-	return log.New(logfile, "[crush-lsp]", log.Ldate|log.Ltime|log.Lshortfile)
+	return log.New(logfile, "[neocrush]", log.Ldate|log.Ltime|log.Lshortfile)
 }

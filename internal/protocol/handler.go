@@ -7,9 +7,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/taigrr/crush-lsp/internal/state"
-	"github.com/taigrr/crush-lsp/internal/transport"
-	"github.com/taigrr/crush-lsp/lsp"
+	"github.com/taigrr/neocrush/internal/state"
+	"github.com/taigrr/neocrush/internal/transport"
+	"github.com/taigrr/neocrush/lsp"
 )
 
 // ClientType identifies the type of connected client.
@@ -174,7 +174,7 @@ func (h *Handler) handleInitialize(client *Client, content []byte) error {
 				CompletionProvider: map[string]any{},
 			},
 			ServerInfo: lsp.ServerInfo{
-				Name:    "crush-lsp",
+				Name:    "neocrush",
 				Version: "0.1.0",
 			},
 		},

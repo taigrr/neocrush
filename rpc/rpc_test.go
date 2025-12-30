@@ -3,7 +3,7 @@ package rpc_test
 import (
 	"testing"
 
-	"github.com/taigrr/crush-lsp/rpc"
+	"github.com/taigrr/neocrush/rpc"
 )
 
 type EncodingExample struct {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/taigrr/crush-lsp/lsp"
+	"github.com/taigrr/neocrush/lsp"
 )
 
 // CursorSource indicates where cursor information came from.

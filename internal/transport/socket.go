@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/taigrr/crush-lsp/rpc"
+	"github.com/taigrr/neocrush/rpc"
 )
 
 // SocketTransport implements Transport over Unix socket.

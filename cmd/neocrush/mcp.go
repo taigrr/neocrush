@@ -41,11 +41,11 @@ type MCPServer struct {
 func NewMCPServer(daemonConn net.Conn) *MCPServer {
 	server := mcp.NewServer(
 		&mcp.Implementation{
-			Name:    "crush-lsp",
+			Name:    "neocrush",
 			Version: version,
 		},
 		&mcp.ServerOptions{
-			Instructions: "Provides editor context from Neovim via crush-lsp daemon",
+			Instructions: "Provides editor context from Neovim via neocrush daemon",
 		},
 	)
 

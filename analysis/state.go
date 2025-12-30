@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/taigrr/crush-lsp/lsp"
+	"github.com/taigrr/neocrush/lsp"
 )
 
 type State struct {

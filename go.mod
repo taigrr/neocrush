@@ -1,4 +1,4 @@
-module github.com/taigrr/crush-lsp
+module github.com/taigrr/neocrush
 
 go 1.23.0
 

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/taigrr/crush-lsp/internal/session"
-	"github.com/taigrr/crush-lsp/rpc"
+	"github.com/taigrr/neocrush/internal/session"
+	"github.com/taigrr/neocrush/rpc"
 )
 
 func TestIdentifyClient(t *testing.T) {

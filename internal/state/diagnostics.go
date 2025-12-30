@@ -3,7 +3,7 @@ package state
 import (
 	"strings"
 
-	"github.com/taigrr/crush-lsp/lsp"
+	"github.com/taigrr/neocrush/lsp"
 )
 
 // getDiagnosticsForFile generates diagnostics for file content.

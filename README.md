@@ -1,4 +1,4 @@
-# crush-lsp
+# neocrush
 
 LSP/MCP server for synchronizing editor state between [Crush](https://github.com/charmbracelet/crush) (Charm's AI coding agent) and Neovim.
 
@@ -23,17 +23,17 @@ When Crush edits files, this server enables:
 ## Installation
 
 ```bash
-go install github.com/taigrr/crush-lsp/cmd/crush-lsp@latest
+go install github.com/taigrr/neocrush/cmd/neocrush@latest
 ```
 
 ## Neovim Plugin
 
-Install [crush-lsp.nvim](https://github.com/taigrr/crush-lsp.nvim) for full integration:
+Install [neocrush.nvim](https://github.com/taigrr/neocrush.nvim) for full integration:
 
 ```lua
 -- lazy.nvim
 {
-  'taigrr/crush-lsp.nvim',
+  'taigrr/neocrush.nvim',
   event = 'VeryLazy',
   opts = {},
 }
@@ -49,23 +49,23 @@ The plugin provides:
 
 ## Crush Configuration
 
-Add crush-lsp to your `~/.config/crush/crush.json`:
+Add neocrush to your `~/.config/crush/crush.json`:
 
 ```json
 {
   "lsp": {
     "*": {
-      "command": "crush-lsp"
+      "command": "neocrush"
     }
   },
   "mcp": {
-    "crush-lsp": {
-      "command": "crush-lsp",
+    "neocrush": {
+      "command": "neocrush",
       "type": "stdio"
     }
   },
   "permissions": {
-    "allowed_tools": ["mcp_crush-lsp_editor_context"]
+    "allowed_tools": ["mcp_neocrush_editor_context"]
   }
 }
 ```
@@ -75,7 +75,7 @@ Add crush-lsp to your `~/.config/crush/crush.json`:
 | Section                     | Purpose                                                      |
 | --------------------------- | ------------------------------------------------------------ |
 | `lsp.*`                     | Fallback LSP for all file types, enabling Crush↔Neovim sync |
-| `mcp.crush-lsp`             | Registers the `editor_context` MCP tool                      |
+| `mcp.neocrush`             | Registers the `editor_context` MCP tool                      |
 | `permissions.allowed_tools` | Whitelists the tool so Crush can use it without prompting    |
 
 ### What This Enables
@@ -87,7 +87,7 @@ Add crush-lsp to your `~/.config/crush/crush.json`:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    crush-lsp daemon                         │
+│                    neocrush daemon                         │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │  Clients:                                             │  │
 │  │  ├─ neovim: LSP over Unix socket                      │  │
@@ -124,8 +124,8 @@ Add crush-lsp to your `~/.config/crush/crush.json`:
 | Path                                   | Purpose                           |
 | -------------------------------------- | --------------------------------- |
 | `.crush/session`                       | Session metadata (workspace root) |
-| `$XDG_RUNTIME_DIR/crush-lsp/<id>.sock` | Unix socket (Linux)               |
-| `$TMPDIR/crush-lsp-$UID/<id>.sock`     | Unix socket (macOS)               |
+| `$XDG_RUNTIME_DIR/neocrush/<id>.sock` | Unix socket (Linux)               |
+| `$TMPDIR/neocrush-$UID/<id>.sock`     | Unix socket (macOS)               |
 
 ## LSP Methods
 
@@ -143,11 +143,11 @@ Add crush-lsp to your `~/.config/crush/crush.json`:
 
 ```bash
 # Build
-go build ./cmd/crush-lsp
+go build ./cmd/neocrush
 
 # Test
 go test ./...
 
 # Run with logging
-crush-lsp --log /tmp/crush-lsp.log
+neocrush --log /tmp/neocrush.log
 ```

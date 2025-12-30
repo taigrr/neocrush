@@ -1,4 +1,4 @@
-// Package session manages crush-lsp session files for daemon coordination
+// Package session manages neocrush session files for daemon coordination
 package session
 
 import (
@@ -13,14 +13,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/taigrr/crush-lsp/internal/state"
+	"github.com/taigrr/neocrush/internal/state"
 )
 
 const (
 	// SessionFileName is the name of the session file in workspace .crush folder.
 	SessionFileName = "session"
 	// SocketDirName is the name of the socket directory in runtime dir.
-	SocketDirName = "crush-lsp"
+	SocketDirName = "neocrush"
 )
 
 // Session represents a paired Neovim/Crush session.
