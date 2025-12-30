@@ -8,6 +8,7 @@ import (
 	"strconv"
 )
 
+// EncodeMessage serializes a message to LSP wire format with Content-Length header.
 func EncodeMessage(msg any) string {
 	content, err := json.Marshal(msg)
 	if err != nil {
@@ -17,10 +18,14 @@ func EncodeMessage(msg any) string {
 	return fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(content), content)
 }
 
+// BaseMessage is the minimal structure needed to identify
+// the method of an incoming JSON-RPC message for routing.
 type BaseMessage struct {
 	Method string `json:"method"`
 }
 
+// DecodeMessage extracts the method name and content from an LSP message.
+// Returns the method, raw JSON content, and any error encountered.
 func DecodeMessage(msg []byte) (string, []byte, error) {
 	header, content, found := bytes.Cut(msg, []byte{'\r', '\n', '\r', '\n'})
 	if !found {
@@ -42,7 +47,8 @@ func DecodeMessage(msg []byte) (string, []byte, error) {
 	return baseMessage.Method, content[:contentLength], nil
 }
 
-// type SplitFunc func(data []byte, atEOF bool) (advance int, token []byte, err error)
+// Split is a bufio.SplitFunc that splits LSP messages by Content-Length.
+// It returns complete messages only, buffering partial data until complete.
 func Split(data []byte, _ bool) (advance int, token []byte, err error) {
 	header, content, found := bytes.Cut(data, []byte{'\r', '\n', '\r', '\n'})
 	if !found {

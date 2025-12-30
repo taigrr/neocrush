@@ -25,6 +25,7 @@ type SelectionChangedNotification struct {
 type SelectionChangedParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Selections   []Range                `json:"selections"`
+	Text         string                 `json:"text,omitempty"` // The selected text content
 }
 
 // DocumentChangedNotification is broadcast when document content changes.

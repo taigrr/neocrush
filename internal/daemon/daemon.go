@@ -2,16 +2,17 @@ package daemon
 
 import (
 	"context"
-	"educationalsp/internal/protocol"
-	"educationalsp/internal/session"
-	"educationalsp/internal/state"
-	"educationalsp/internal/transport"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+
+	"github.com/taigrr/crush-lsp/internal/protocol"
+	"github.com/taigrr/crush-lsp/internal/session"
+	"github.com/taigrr/crush-lsp/internal/state"
+	"github.com/taigrr/crush-lsp/internal/transport"
 )
 
 // Daemon manages the crush-lsp daemon process.

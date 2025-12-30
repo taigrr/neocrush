@@ -1,8 +1,9 @@
 package state
 
 import (
-	"educationalsp/lsp"
 	"strings"
+
+	"github.com/taigrr/crush-lsp/lsp"
 )
 
 // getDiagnosticsForFile generates diagnostics for file content.

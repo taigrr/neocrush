@@ -1,12 +1,16 @@
+// Package state provides thread-safe document state management for LSP sync
 package state
 
 import (
-	"educationalsp/lsp"
 	"sync"
 	"time"
+
+	"github.com/taigrr/crush-lsp/lsp"
 )
 
 // CursorSource indicates where cursor information came from.
+// This is used to track the origin of cursor position updates
+// for debugging and to prioritize certain sources over others.
 type CursorSource string
 
 const (
@@ -28,6 +32,8 @@ type CursorState struct {
 }
 
 // Document represents an open text document with thread-safe access.
+// It stores the current content, version, and provides synchronized
+// read/write operations for safe concurrent access from multiple goroutines.
 type Document struct {
 	URI        string
 	Content    string

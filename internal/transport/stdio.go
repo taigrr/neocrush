@@ -2,9 +2,10 @@ package transport
 
 import (
 	"bufio"
-	"educationalsp/rpc"
 	"io"
 	"sync"
+
+	"github.com/taigrr/crush-lsp/rpc"
 )
 
 // Transport represents a bidirectional LSP transport.

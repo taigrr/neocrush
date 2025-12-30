@@ -2,12 +2,13 @@ package transport
 
 import (
 	"bufio"
-	"educationalsp/rpc"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"sync"
+
+	"github.com/taigrr/crush-lsp/rpc"
 )
 
 // SocketTransport implements Transport over Unix socket.

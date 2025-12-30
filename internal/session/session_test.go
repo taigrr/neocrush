@@ -1,10 +1,11 @@
 package session_test
 
 import (
-	"educationalsp/internal/session"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/taigrr/crush-lsp/internal/session"
 )
 
 func TestGenerateSessionID(t *testing.T) {

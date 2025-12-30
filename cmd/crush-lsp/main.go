@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,14 +12,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
-	"educationalsp/internal/session"
-	"educationalsp/rpc"
+	"github.com/taigrr/crush-lsp/internal/session"
+	"github.com/taigrr/crush-lsp/rpc"
 )
 
-var version = "0.1.4"
+var version = "0.2.7"
 
 func main() {
 	logPath := flag.String("log", "", "Log file path")
@@ -52,17 +54,87 @@ func runClient(logger *log.Logger) {
 	cwd, _ := os.Getwd()
 	mgr := session.NewManager()
 
+	// Peek at stdin to detect protocol (MCP vs LSP)
+	// MCP: newline-delimited JSON, starts with '{'
+	// LSP: Content-Length header, starts with 'C'
+	stdinReader := bufio.NewReader(os.Stdin)
+
+	// Set a reasonable timeout for protocol detection
+	// If we don't receive data within 5 seconds, assume MCP (which may send data later)
+	done := make(chan struct{})
+	var firstByte []byte
+	var peekErr error
+
+	go func() {
+		firstByte, peekErr = stdinReader.Peek(1)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if peekErr != nil {
+			// EOF or error - could be MCP client that hasn't sent yet, or closed pipe
+			// Try running as MCP server anyway - it will handle the error gracefully
+			logger.Printf("Peek returned error (%v), attempting MCP mode", peekErr)
+			runMCPClient(logger, cwd, mgr, stdinReader)
+			return
+		}
+	case <-time.After(5 * time.Second):
+		// Timeout waiting for first byte - assume MCP
+		logger.Printf("Timeout waiting for first byte, assuming MCP protocol")
+		runMCPClient(logger, cwd, mgr, stdinReader)
+		return
+	}
+
+	isMCP := firstByte[0] == '{'
+	if isMCP {
+		logger.Printf("Detected MCP protocol")
+		runMCPClient(logger, cwd, mgr, stdinReader)
+		return
+	}
+
+	logger.Printf("Detected LSP protocol")
+	runLSPClient(logger, cwd, mgr, stdinReader)
+}
+
+func runMCPClient(logger *log.Logger, cwd string, mgr *session.Manager, stdinReader *bufio.Reader) {
+	// Connect to daemon (or start one)
+	conn, err := connectToDaemon(logger, cwd, mgr)
+	if err != nil {
+		logger.Fatalf("Failed to connect to daemon: %v", err)
+	}
+	defer conn.Close()
+
+	// Run MCP server with daemon connection
+	mcpServer := NewMCPServer(conn)
+
+	// Create a custom stdin that uses our buffered reader
+	ctx := context.Background()
+	if err := mcpServer.RunWithReader(ctx, stdinReader); err != nil {
+		logger.Printf("MCP server error: %v", err)
+	}
+}
+
+func runLSPClient(logger *log.Logger, cwd string, mgr *session.Manager, stdinReader *bufio.Reader) {
+	conn, err := connectToDaemon(logger, cwd, mgr)
+	if err != nil {
+		logger.Fatalf("Failed to connect to daemon: %v", err)
+	}
+	defer conn.Close()
+
+	logger.Printf("LSP client connected to daemon")
+	bridgeConnections(stdinReader, os.Stdout, conn, logger)
+}
+
+func connectToDaemon(logger *log.Logger, cwd string, mgr *session.Manager) (net.Conn, error) {
 	// Try to load existing session (don't check socket - we'll verify by connecting)
 	sess, err := mgr.LoadSessionMetadata(cwd)
 	if err == nil {
 		// Session file exists, try to connect to existing daemon
 		conn, err := net.DialTimeout("unix", sess.SocketPath, 2*time.Second)
 		if err == nil {
-			// Connected to existing daemon
-			defer conn.Close()
 			logger.Printf("Connected to existing session %s", sess.ID)
-			bridgeConnections(os.Stdin, os.Stdout, conn, logger)
-			return
+			return conn, nil
 		}
 		// Socket exists in session but can't connect - daemon probably dead
 		logger.Printf("Session exists but daemon unreachable, creating new session")
@@ -71,17 +143,16 @@ func runClient(logger *log.Logger) {
 	// No session or daemon dead - start new daemon
 	sess, err = startDaemonAndCreateSession(logger, cwd, mgr)
 	if err != nil {
-		logger.Fatalf("Failed to start daemon: %v", err)
+		return nil, fmt.Errorf("failed to start daemon: %w", err)
 	}
 
 	conn, err := net.DialTimeout("unix", sess.SocketPath, 5*time.Second)
 	if err != nil {
-		logger.Fatalf("Failed to connect to daemon: %v", err)
+		return nil, fmt.Errorf("failed to connect to daemon: %w", err)
 	}
-	defer conn.Close()
 
 	logger.Printf("Connected to session %s", sess.ID)
-	bridgeConnections(os.Stdin, os.Stdout, conn, logger)
+	return conn, nil
 }
 
 func startDaemonAndCreateSession(logger *log.Logger, cwd string, mgr *session.Manager) (*session.Session, error) {
@@ -168,6 +239,8 @@ func runDaemon(logger *log.Logger) {
 		listener:        listener,
 		clients:         make(map[string]net.Conn),
 		pendingRequests: make(map[int]bool),
+		documentState:   make(map[string]string),
+		neovimOpenDocs:  make(map[string]bool),
 	}
 
 	daemon.run()
@@ -179,9 +252,19 @@ type Daemon struct {
 	listener net.Listener
 
 	mu              sync.RWMutex
-	clients         map[string]net.Conn // "neovim" or "crush" -> connection
+	clients         map[string]net.Conn // "neovim", "crush", or "mcp" -> connection
 	requestID       int                 // Counter for generating unique request IDs
 	pendingRequests map[int]bool        // Request IDs we've sent (to filter responses)
+	documentState   map[string]string   // URI -> last known content (for diffing)
+	neovimOpenDocs  map[string]bool     // URIs of documents open in Neovim
+
+	// Cursor tracking for MCP tool
+	cursorURI    string // Current file URI
+	cursorLine   int    // 0-indexed line
+	cursorColumn int    // 0-indexed column
+
+	// Selection tracking (from crush/selectionChanged)
+	selectionText string // Currently selected text (empty if no selection)
 }
 
 func (d *Daemon) run() {
@@ -207,6 +290,35 @@ func (d *Daemon) handleClient(conn net.Conn) {
 
 	for scanner.Scan() {
 		msg := scanner.Bytes()
+
+		// Check for MCP-specific requests first (these don't require identification)
+		method, content, _ := rpc.DecodeMessage(msg)
+
+		// Handle crush/getEditorContext request from MCP client (no identification needed)
+		if method == "crush/getEditorContext" {
+			if clientName == "" {
+				clientName = "mcp"
+				d.logger.Printf("Client identified: %s (from getEditorContext)", clientName)
+				d.mu.Lock()
+				d.clients[clientName] = conn
+				d.mu.Unlock()
+
+				defer func() {
+					d.mu.Lock()
+					delete(d.clients, clientName)
+					d.mu.Unlock()
+					d.logger.Printf("Client disconnected: %s", clientName)
+
+					// Exit daemon if no clients remain
+					if len(d.clients) == 0 {
+						d.logger.Println("No clients remaining, shutting down")
+						d.listener.Close()
+					}
+				}()
+			}
+			d.handleGetEditorContext(content, conn)
+			continue
+		}
 
 		// Parse to identify client from initialize request
 		if clientName == "" {
@@ -234,9 +346,26 @@ func (d *Daemon) handleClient(conn net.Conn) {
 		}
 
 		// Handle initialized notification (don't forward, just acknowledge)
-		method, content, _ := rpc.DecodeMessage(msg)
 		if method == "initialized" {
 			continue
+		}
+
+		// Handle crush/cursorMoved from Neovim
+		if method == "crush/cursorMoved" {
+			d.handleCursorMoved(content)
+			continue
+		}
+
+		// Handle crush/selectionChanged from Neovim
+		if method == "crush/selectionChanged" {
+			d.handleSelectionChanged(content)
+			continue
+		}
+
+		// Track cursor position from Neovim requests
+		if clientName == "neovim" {
+			d.trackCursorFromRequest(method, content)
+			d.trackNeovimDocuments(method, content)
 		}
 
 		// Filter out responses to our own requests (from Neovim responding to workspace/applyEdit)
@@ -280,7 +409,7 @@ func (d *Daemon) handleInitialize(msg []byte, conn net.Conn) (string, error) {
 
 	// Extract request ID and client info
 	var req struct {
-		ID     interface{} `json:"id"`
+		ID     any `json:"id"`
 		Params struct {
 			ClientInfo struct {
 				Name string `json:"name"`
@@ -292,18 +421,34 @@ func (d *Daemon) handleInitialize(msg []byte, conn net.Conn) (string, error) {
 		return "", err
 	}
 
+	// Identify client first to determine capabilities
+	clientName := d.identifyClient(msg)
+
+	// Different capabilities for different clients
+	var changeSync int
+	if clientName == "neovim" {
+		changeSync = 0 // Don't send us changes - we'll send workspace/applyEdit
+	} else {
+		changeSync = 2 // Incremental - Crush sends us changes to forward to Neovim
+	}
+
 	// Send initialize response
-	response := map[string]interface{}{
+	response := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      req.ID,
-		"result": map[string]interface{}{
-			"capabilities": map[string]interface{}{
-				"textDocumentSync": map[string]interface{}{
+		"result": map[string]any{
+			"capabilities": map[string]any{
+				"textDocumentSync": map[string]any{
 					"openClose": true,
-					"change":    2, // Incremental
+					"change":    changeSync,
+				},
+				"experimental": map[string]any{
+					"cursorSync":    true,
+					"selectionSync": true,
+					"editorContext": true,
 				},
 			},
-			"serverInfo": map[string]interface{}{
+			"serverInfo": map[string]any{
 				"name":    "crush-lsp",
 				"version": version,
 			},
@@ -449,6 +594,7 @@ func (d *Daemon) transformCrushToNeovim(msg []byte) []byte {
 }
 
 // didChangeToApplyEdit converts a textDocument/didChange notification into a workspace/applyEdit request.
+// Uses line-based diffing to only send changed regions, preserving unsaved changes in other parts of the buffer.
 func (d *Daemon) didChangeToApplyEdit(content []byte) []byte {
 	var didChange struct {
 		Params struct {
@@ -475,39 +621,386 @@ func (d *Daemon) didChangeToApplyEdit(content []byte) []byte {
 	newText := didChange.Params.ContentChanges[0].Text
 	uri := didChange.Params.TextDocument.URI
 
-	d.logger.Printf("Crush changed file: %s (%d bytes)", uri, len(newText))
+	// Get previous state for diffing
+	d.mu.Lock()
+	oldText, hasOld := d.documentState[uri]
+	d.documentState[uri] = newText
+	neovimHasFile := d.neovimOpenDocs[uri]
+	d.mu.Unlock()
 
-	// Create workspace/applyEdit request
-	// This replaces the entire document content
+	var edits []map[string]any
+
+	if !neovimHasFile {
+		// Neovim doesn't have this file open. Crush already saved to disk.
+		// Send a no-op edit (replace changed lines with themselves) to trigger
+		// file open and highlight without doubling the content.
+		d.logger.Printf("Neovim doesn't have %s open, sending no-op edit for highlight", uri)
+
+		// Compute diff to find which lines changed
+		if !hasOld {
+			if path, err := uriToPath(uri); err == nil {
+				if data, err := os.ReadFile(path); err == nil {
+					// Disk has new content, we need oldText from before
+					// But we don't have it - use newText to find the region
+					// and send a no-op that replaces it with itself
+					oldText = string(data)
+					hasOld = true
+				}
+			}
+		}
+
+		// Find the changed region by diffing old vs new
+		realEdits := computeLineEdits(oldText, newText)
+		if len(realEdits) == 0 {
+			d.logger.Printf("No changes detected for %s", uri)
+			return nil
+		}
+
+		// Create no-op edits: replace each region with the NEW content (same as disk)
+		for _, edit := range realEdits {
+			rangeData := edit["range"].(map[string]any)
+			startLine := rangeData["start"].(map[string]any)["line"].(int)
+			endLine := rangeData["end"].(map[string]any)["line"].(int)
+
+			// Get the lines from newText that correspond to this range
+			newLines := strings.Split(newText, "\n")
+			var replacementLines []string
+			for i := startLine; i < endLine && i < len(newLines); i++ {
+				replacementLines = append(replacementLines, newLines[i])
+			}
+			replacementText := strings.Join(replacementLines, "\n")
+			if len(replacementLines) > 0 && endLine <= len(newLines) {
+				replacementText += "\n"
+			}
+
+			// No-op: replace the range with what's already there (from disk/newText)
+			edits = append(edits, map[string]any{
+				"range":   rangeData,
+				"newText": replacementText,
+			})
+		}
+	} else {
+		// Neovim has the file open - send the real diff
+		if !hasOld {
+			// First time seeing this file - read from disk as baseline
+			if path, err := uriToPath(uri); err == nil {
+				if data, err := os.ReadFile(path); err == nil {
+					oldText = string(data)
+					hasOld = true
+				}
+			}
+		}
+
+		// Compute line-based diff
+		edits = computeLineEdits(oldText, newText)
+		if len(edits) == 0 {
+			d.logger.Printf("No changes detected for %s", uri)
+			return nil
+		}
+	}
+
+	d.logger.Printf("Crush changed file: %s (%d edits, neovim_open=%v)", uri, len(edits), neovimHasFile)
+
+	// Create workspace/applyEdit request with incremental edits
 	d.mu.Lock()
 	d.requestID++
 	requestID := d.requestID
 	d.pendingRequests[requestID] = true
 	d.mu.Unlock()
 
-	applyEdit := map[string]interface{}{
+	applyEdit := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      requestID,
 		"method":  "workspace/applyEdit",
-		"params": map[string]interface{}{
+		"params": map[string]any{
 			"label": "Crush edit",
-			"edit": map[string]interface{}{
-				"changes": map[string]interface{}{
-					uri: []map[string]interface{}{
-						{
-							"range": map[string]interface{}{
-								"start": map[string]interface{}{"line": 0, "character": 0},
-								"end":   map[string]interface{}{"line": 999999, "character": 0},
-							},
-							"newText": newText,
-						},
-					},
+			"edit": map[string]any{
+				"changes": map[string]any{
+					uri: edits,
 				},
 			},
 		},
 	}
 
 	return []byte(rpc.EncodeMessage(applyEdit))
+}
+
+// uriToPath converts a file:// URI to a local path
+func uriToPath(uri string) (string, error) {
+	if !strings.HasPrefix(uri, "file://") {
+		return "", fmt.Errorf("not a file URI: %s", uri)
+	}
+	return strings.TrimPrefix(uri, "file://"), nil
+}
+
+// computeLineEdits computes minimal line-based edits to transform oldText into newText.
+// Returns a slice of LSP TextEdit objects.
+func computeLineEdits(oldText, newText string) []map[string]any {
+	oldLines := strings.Split(oldText, "\n")
+	newLines := strings.Split(newText, "\n")
+
+	// Find common prefix
+	prefixLen := 0
+	for prefixLen < len(oldLines) && prefixLen < len(newLines) && oldLines[prefixLen] == newLines[prefixLen] {
+		prefixLen++
+	}
+
+	// Find common suffix (but don't overlap with prefix)
+	suffixLen := 0
+	for suffixLen < len(oldLines)-prefixLen && suffixLen < len(newLines)-prefixLen &&
+		oldLines[len(oldLines)-1-suffixLen] == newLines[len(newLines)-1-suffixLen] {
+		suffixLen++
+	}
+
+	// The changed region
+	oldStart := prefixLen
+	oldEnd := len(oldLines) - suffixLen
+	newStart := prefixLen
+	newEnd := len(newLines) - suffixLen
+
+	if oldStart >= oldEnd && newStart >= newEnd {
+		// No changes
+		return nil
+	}
+
+	// Build the replacement text
+	var replacementLines []string
+	for i := newStart; i < newEnd; i++ {
+		replacementLines = append(replacementLines, newLines[i])
+	}
+	replacementText := strings.Join(replacementLines, "\n")
+
+	// Add trailing newline if we're not at the end and original had content after
+	if newEnd < len(newLines) && len(replacementLines) > 0 {
+		replacementText += "\n"
+	} else if oldEnd < len(oldLines) && len(replacementLines) > 0 {
+		replacementText += "\n"
+	}
+
+	// Handle edge case: if we're replacing lines but keeping suffix, we need the newline
+	if oldEnd < len(oldLines) && newEnd < len(newLines) && len(replacementLines) == 0 {
+		// Deleting lines - no trailing newline needed
+	}
+
+	edit := map[string]any{
+		"range": map[string]any{
+			"start": map[string]any{"line": oldStart, "character": 0},
+			"end":   map[string]any{"line": oldEnd, "character": 0},
+		},
+		"newText": replacementText,
+	}
+
+	return []map[string]any{edit}
+}
+
+// trackCursorFromRequest extracts cursor position from LSP requests that include position info.
+func (d *Daemon) trackCursorFromRequest(method string, content []byte) {
+	// Methods that include textDocument + position
+	switch method {
+	case "textDocument/hover",
+		"textDocument/completion",
+		"textDocument/definition",
+		"textDocument/references",
+		"textDocument/documentHighlight",
+		"textDocument/codeAction",
+		"textDocument/signatureHelp":
+		// Extract position
+		var req struct {
+			Params struct {
+				TextDocument struct {
+					URI string `json:"uri"`
+				} `json:"textDocument"`
+				Position struct {
+					Line      int `json:"line"`
+					Character int `json:"character"`
+				} `json:"position"`
+			} `json:"params"`
+		}
+		if err := json.Unmarshal(content, &req); err == nil && req.Params.TextDocument.URI != "" {
+			d.mu.Lock()
+			d.cursorURI = req.Params.TextDocument.URI
+			d.cursorLine = req.Params.Position.Line
+			d.cursorColumn = req.Params.Position.Character
+			d.mu.Unlock()
+			d.logger.Printf("Cursor updated: %s:%d:%d (from %s)", d.cursorURI, d.cursorLine, d.cursorColumn, method)
+		}
+	}
+}
+
+// trackNeovimDocuments tracks which documents Neovim has open.
+func (d *Daemon) trackNeovimDocuments(method string, content []byte) {
+	switch method {
+	case "textDocument/didOpen":
+		var req struct {
+			Params struct {
+				TextDocument struct {
+					URI string `json:"uri"`
+				} `json:"textDocument"`
+			} `json:"params"`
+		}
+		if err := json.Unmarshal(content, &req); err == nil && req.Params.TextDocument.URI != "" {
+			d.mu.Lock()
+			d.neovimOpenDocs[req.Params.TextDocument.URI] = true
+			d.mu.Unlock()
+			d.logger.Printf("Neovim opened: %s", req.Params.TextDocument.URI)
+		}
+	case "textDocument/didClose":
+		var req struct {
+			Params struct {
+				TextDocument struct {
+					URI string `json:"uri"`
+				} `json:"textDocument"`
+			} `json:"params"`
+		}
+		if err := json.Unmarshal(content, &req); err == nil && req.Params.TextDocument.URI != "" {
+			d.mu.Lock()
+			delete(d.neovimOpenDocs, req.Params.TextDocument.URI)
+			d.mu.Unlock()
+			d.logger.Printf("Neovim closed: %s", req.Params.TextDocument.URI)
+		}
+	}
+}
+
+// handleSelectionChanged processes crush/selectionChanged from Neovim.
+func (d *Daemon) handleSelectionChanged(content []byte) {
+	var notif struct {
+		Params struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+			Text string `json:"text"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(content, &notif); err != nil {
+		d.logger.Printf("Failed to parse selectionChanged: %v", err)
+		return
+	}
+
+	d.mu.Lock()
+	d.selectionText = notif.Params.Text
+	if notif.Params.TextDocument.URI != "" {
+		d.cursorURI = notif.Params.TextDocument.URI
+	}
+	d.mu.Unlock()
+
+	d.logger.Printf("Selection updated: %d chars in %s", len(d.selectionText), d.cursorURI)
+}
+
+// handleCursorMoved processes crush/cursorMoved from Neovim.
+func (d *Daemon) handleCursorMoved(content []byte) {
+	var notif struct {
+		Params struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+			Position struct {
+				Line      int `json:"line"`
+				Character int `json:"character"`
+			} `json:"position"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(content, &notif); err != nil {
+		d.logger.Printf("Failed to parse cursorMoved: %v", err)
+		return
+	}
+
+	d.mu.Lock()
+	d.cursorURI = notif.Params.TextDocument.URI
+	d.cursorLine = notif.Params.Position.Line
+	d.cursorColumn = notif.Params.Position.Character
+	d.mu.Unlock()
+
+	d.logger.Printf("Cursor moved: %s:%d:%d", d.cursorURI, d.cursorLine, d.cursorColumn)
+}
+
+// handleGetEditorContext responds to crush/getEditorContext requests from MCP clients.
+func (d *Daemon) handleGetEditorContext(content []byte, conn net.Conn) {
+	var req struct {
+		ID any `json:"id"`
+	}
+	if err := json.Unmarshal(content, &req); err != nil {
+		d.logger.Printf("Failed to parse getEditorContext request: %v", err)
+		return
+	}
+
+	d.mu.RLock()
+	uri := d.cursorURI
+	line := d.cursorLine
+	col := d.cursorColumn
+	selectionText := d.selectionText
+	docContent, hasDoc := d.documentState[uri]
+	d.mu.RUnlock()
+
+	// Build response
+	hasSelection := selectionText != ""
+	result := map[string]any{
+		"uri":           uri,
+		"filename":      extractFilename(uri),
+		"cursor_line":   line,
+		"cursor_column": col,
+		"has_selection": hasSelection,
+	}
+	if hasSelection {
+		result["selection"] = selectionText
+	}
+
+	if hasDoc {
+		lines := strings.Split(docContent, "\n")
+		result["total_lines"] = len(lines)
+
+		// Get context lines (5 before, current, 5 after)
+		startLine := line - 5
+		if startLine < 0 {
+			startLine = 0
+		}
+		endLine := line + 6 // exclusive
+		if endLine > len(lines) {
+			endLine = len(lines)
+		}
+
+		var beforeLines, afterLines []string
+		for i := startLine; i < line && i < len(lines); i++ {
+			beforeLines = append(beforeLines, lines[i])
+		}
+		result["context_before"] = strings.Join(beforeLines, "\n")
+
+		if line < len(lines) {
+			result["context_line"] = lines[line]
+		} else {
+			result["context_line"] = ""
+		}
+
+		for i := line + 1; i < endLine && i < len(lines); i++ {
+			afterLines = append(afterLines, lines[i])
+		}
+		result["context_after"] = strings.Join(afterLines, "\n")
+	} else {
+		result["total_lines"] = 0
+		result["context_before"] = ""
+		result["context_line"] = ""
+		result["context_after"] = ""
+	}
+
+	response := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      req.ID,
+		"result":  result,
+	}
+
+	responseMsg := rpc.EncodeMessage(response)
+	if _, err := conn.Write([]byte(responseMsg)); err != nil {
+		d.logger.Printf("Failed to send getEditorContext response: %v", err)
+	}
+}
+
+// extractFilename extracts the filename from a file:// URI.
+func extractFilename(uri string) string {
+	path := strings.TrimPrefix(uri, "file://")
+	idx := strings.LastIndex(path, "/")
+	if idx >= 0 {
+		return path[idx+1:]
+	}
+	return path
 }
 
 func bridgeConnections(stdin io.Reader, stdout io.Writer, conn net.Conn, logger *log.Logger) {
@@ -547,7 +1040,7 @@ func bridgeConnections(stdin io.Reader, stdout io.Writer, conn net.Conn, logger 
 }
 
 func printUsage() {
-	fmt.Println(`crush-lsp - LSP state synchronization for Crush and Neovim
+	fmt.Println(`crush-lsp - LSP/MCP multiplexed server for Crush and Neovim
 
 USAGE:
     crush-lsp [OPTIONS]
@@ -558,7 +1051,12 @@ OPTIONS:
     --help        Show this help
 
 DESCRIPTION:
-    Runs as an LSP server that synchronizes state between Neovim and Crush.
+    Runs as an LSP server that synchronizes state between Neovim and Crush,
+    and as an MCP server providing editor context to AI tools.
+    
+    Protocol is auto-detected from the first message:
+    - LSP: Content-Length header (from Neovim/Crush LSP clients)
+    - MCP: Newline-delimited JSON (from AI tools like Claude)
     
     On first run, starts a background daemon and connects to it.
     Subsequent clients connect to the same daemon.
@@ -567,9 +1065,14 @@ DESCRIPTION:
     Client identification is automatic via the LSP initialize request.
     Messages from Neovim are forwarded to Crush and vice versa.
 
+MCP TOOLS:
+    editor_context    Get current cursor position, surrounding code,
+                      and active file from Neovim
+
 CONFIGURATION:
     Neovim: Add to LSP config with cmd = { "crush-lsp" }
     Crush:  Add to crush.json lsp section with command = "crush-lsp"
+    MCP:    Add to mcp config with command = "crush-lsp"
 
 FILES:
     .crush/session              Session info (in workspace root)
@@ -579,7 +1082,7 @@ FILES:
 
 func getLogger(path string) *log.Logger {
 	if path == "" {
-		path = os.Getenv("CRUSH_LOG")
+		path = os.Getenv("CRUSH_LSP_LOG")
 	}
 	if path == "" {
 		// Default to stderr for client, let daemon set its own

@@ -1,8 +1,8 @@
+// Package session manages crush-lsp session files for daemon coordination
 package session
 
 import (
 	"crypto/rand"
-	"educationalsp/internal/state"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -12,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/taigrr/crush-lsp/internal/state"
 )
 
 const (
@@ -22,6 +24,8 @@ const (
 )
 
 // Session represents a paired Neovim/Crush session.
+// It manages the connection state between a Neovim instance and
+// a Crush AI agent, enabling bidirectional communication and state sync.
 type Session struct {
 	ID            string    `json:"id"`
 	WorkspaceRoot string    `json:"workspace_root"`

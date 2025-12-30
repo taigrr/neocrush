@@ -1,14 +1,15 @@
 package protocol
 
 import (
-	"educationalsp/internal/state"
-	"educationalsp/internal/transport"
-	"educationalsp/lsp"
 	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
+
+	"github.com/taigrr/crush-lsp/internal/state"
+	"github.com/taigrr/crush-lsp/internal/transport"
+	"github.com/taigrr/crush-lsp/lsp"
 )
 
 // ClientType identifies the type of connected client.
@@ -51,8 +52,8 @@ type Handler struct {
 	requestID atomic.Int64
 
 	// Track focused document
-	focusedURI   string
-	focusedMu    sync.RWMutex
+	focusedURI string
+	focusedMu  sync.RWMutex
 
 	// Neovim client (for sending requests to editor)
 	neovimClient *Client

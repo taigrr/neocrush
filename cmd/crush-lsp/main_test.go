@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"educationalsp/internal/session"
-	"educationalsp/rpc"
+	"github.com/taigrr/crush-lsp/internal/session"
+	"github.com/taigrr/crush-lsp/rpc"
 )
 
 func TestIdentifyClient(t *testing.T) {
@@ -57,11 +57,11 @@ func TestIdentifyClient_NonInitialize(t *testing.T) {
 	}
 
 	// Test with non-initialize message
-	msg := rpc.EncodeMessage(map[string]interface{}{
+	msg := rpc.EncodeMessage(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "textDocument/didOpen",
-		"params":  map[string]interface{}{},
+		"params":  map[string]any{},
 	})
 
 	result := d.identifyClient([]byte(msg))
@@ -71,16 +71,16 @@ func TestIdentifyClient_NonInitialize(t *testing.T) {
 }
 
 func createInitializeMessage(clientName string) string {
-	params := map[string]interface{}{
-		"capabilities": map[string]interface{}{},
+	params := map[string]any{
+		"capabilities": map[string]any{},
 	}
 	if clientName != "" {
-		params["clientInfo"] = map[string]interface{}{
+		params["clientInfo"] = map[string]any{
 			"name": clientName,
 		}
 	}
 
-	return rpc.EncodeMessage(map[string]interface{}{
+	return rpc.EncodeMessage(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
@@ -114,9 +114,11 @@ func TestDaemonClientRouting(t *testing.T) {
 	defer os.Remove(sess.SocketPath)
 
 	daemon := &Daemon{
-		logger:   log.New(io.Discard, "", 0),
-		listener: listener,
-		clients:  make(map[string]net.Conn),
+		logger:          log.New(io.Discard, "", 0),
+		listener:        listener,
+		clients:         make(map[string]net.Conn),
+		pendingRequests: make(map[int]bool),
+		documentState:   make(map[string]string),
 	}
 
 	// Start daemon in background
@@ -191,13 +193,17 @@ func TestDaemonClientRouting(t *testing.T) {
 	}
 
 	// Test message forwarding: send from Neovim, should arrive at Crush
-	testMsg := rpc.EncodeMessage(map[string]interface{}{
+	// Messages pass through without transformation (Neovim has change:0 so won't send didChange in practice)
+	testMsg := rpc.EncodeMessage(map[string]any{
 		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "textDocument/didOpen",
-		"params": map[string]interface{}{
-			"textDocument": map[string]interface{}{
-				"uri": "file:///test.go",
+		"method":  "textDocument/didChange",
+		"params": map[string]any{
+			"textDocument": map[string]any{
+				"uri":     "file:///test.go",
+				"version": 1,
+			},
+			"contentChanges": []map[string]any{
+				{"text": "package main"},
 			},
 		},
 	})
@@ -217,8 +223,9 @@ func TestDaemonClientRouting(t *testing.T) {
 	}
 
 	received := crushScanner.Bytes()
-	if !strings.Contains(string(received), "textDocument/didOpen") {
-		t.Errorf("Expected didOpen message, got: %s", string(received))
+	// Messages from Neovim pass through as-is (no transformation)
+	if !strings.Contains(string(received), "textDocument/didChange") {
+		t.Errorf("Expected didChange message to pass through, got: %s", string(received))
 	}
 }
 
@@ -247,9 +254,11 @@ func TestDaemonClientDisconnect(t *testing.T) {
 	defer os.Remove(sess.SocketPath)
 
 	daemon := &Daemon{
-		logger:   log.New(io.Discard, "", 0),
-		listener: listener,
-		clients:  make(map[string]net.Conn),
+		logger:          log.New(io.Discard, "", 0),
+		listener:        listener,
+		clients:         make(map[string]net.Conn),
+		pendingRequests: make(map[int]bool),
+		documentState:   make(map[string]string),
 	}
 
 	// Start daemon in background
@@ -338,7 +347,7 @@ func TestBridgeConnections(t *testing.T) {
 	}()
 
 	// Test stdin -> socket
-	testMsg := rpc.EncodeMessage(map[string]interface{}{
+	testMsg := rpc.EncodeMessage(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "test",
@@ -360,7 +369,7 @@ func TestBridgeConnections(t *testing.T) {
 	}
 
 	// Test socket -> stdout
-	responseMsg := rpc.EncodeMessage(map[string]interface{}{
+	responseMsg := rpc.EncodeMessage(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"result":  "ok",

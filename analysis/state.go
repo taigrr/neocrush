@@ -1,9 +1,10 @@
 package analysis
 
 import (
-	"educationalsp/lsp"
 	"fmt"
 	"strings"
+
+	"github.com/taigrr/crush-lsp/lsp"
 )
 
 type State struct {

@@ -1,164 +1,139 @@
 # crush-lsp
 
-LSP-based state synchronization between [Crush](https://github.com/charmbracelet/crush) (Charm's AI coding agent) and Neovim.
+LSP/MCP server for synchronizing editor state between [Crush](https://github.com/charmbracelet/crush) (Charm's AI coding agent) and Neovim.
 
 ## Overview
 
-When Crush runs inside Neovim's terminal (`:term`), edits it makes are invisible to Neovim until disk reload.
-This LSP server enables bidirectional state synchronization:
+When Crush edits files, this server enables:
 
-- **Neovim → Crush**: Cursor position, current buffer, diagnostics
-- **Crush → Neovim**: Live buffer updates, focus changes
+- **Live buffer updates**: Crush edits appear instantly in Neovim with flash highlights
+- **Cursor/selection tracking**: AI tools can see your current position and selected text
+- **Auto-focus**: Edited files open automatically in Neovim
+- **MCP integration**: Provides `editor_context` tool for AI assistants
 
 ## Features
 
-- Thread-safe shared state between Neovim and Crush
-- Auto-discovery of sessions via `.crush/session` file
+- Daemon architecture: single daemon per workspace, multiple clients
+- Auto-detection of LSP vs MCP protocol
+- Flash highlights on AI edits (like yank highlight)
+- No-op edits for unopened files (triggers highlight without doubling content)
 - Secure socket placement (`$XDG_RUNTIME_DIR` or `$TMPDIR`)
-- Standard LSP methods (no plugin required for basic features)
-- Custom `crush/*` methods for real-time cursor tracking
-- `workspace/applyEdit` for Crush→Neovim live edits
-- `window/showDocument` for Crush→Neovim focus changes
+- Custom `crush/*` methods for real-time cursor/selection tracking
 
 ## Installation
 
 ```bash
-go install ./cmd/crush-lsp
+go install github.com/taigrr/crush-lsp/cmd/crush-lsp@latest
 ```
 
-## Usage
+## Neovim Plugin
 
-### Standalone Mode (Simple)
-
-Run as a standard LSP server—no sessions, basic features only:
+Install [crush-lsp.nvim](https://github.com/taigrr/crush-lsp.nvim) for full integration:
 
 ```lua
--- In your Neovim config
-vim.lsp.start({
-  name = "crush-lsp",
-  cmd = { "crush-lsp" },
-})
+-- lazy.nvim
+{
+  'taigrr/crush-lsp.nvim',
+  event = 'VeryLazy',
+  opts = {},
+}
 ```
 
-### Session Mode (Full Features)
+The plugin provides:
 
-For Crush integration with automatic session discovery:
+- Auto-start LSP on buffer enter
+- Flash highlights on `workspace/applyEdit`
+- Cursor position sync (`crush/cursorMoved`)
+- Selection sync (`crush/selectionChanged`)
+- Crush terminal management (`:CrushToggle`, `<leader>cc`)
 
-```lua
--- In your Neovim config
-vim.lsp.start({
-  name = "crush-lsp",
-  cmd = { "crush-lsp", "lsp" },
-})
+## MCP Configuration
+
+Add to your MCP config (e.g., Crush's `mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "crush-lsp": {
+      "command": "crush-lsp"
+    }
+  }
+}
 ```
 
-This creates a `.crush/session` file in your workspace.
-Crush automatically discovers the session when run from the same directory.
+This provides the `editor_context` tool for AI assistants to query:
 
-```bash
-# In Neovim's :term or another terminal in the same workspace
-crush  # Auto-discovers session via .crush/session
-```
-
-### Neovim Plugin (Optional)
-
-For real-time cursor position tracking, add the plugin:
-
-```lua
--- ~/.config/nvim/lua/crush-lsp.lua (copy from plugin/crush-lsp.lua)
-require('crush-lsp').setup({
-  debounce_ms = 50,  -- cursor notification debounce
-  debug = false,     -- enable debug logging
-})
-```
-
-This adds `crush/cursorMoved` notifications on every cursor movement.
-Without the plugin, cursor position is only tracked when you trigger hover, completion, etc.
+- Current file and cursor position
+- Surrounding code context (5 lines before/after)
+- Selected text (if any)
 
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│                     crush-lsp process                      │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │  Session (discovered via .crush/session)            │  │
-│  │  ├─ neovimClient: LSP over stdio                    │  │
-│  │  ├─ crushClient: LSP over Unix socket               │  │
-│  │  └─ state: *SharedState (mutex-protected)           │  │
-│  │      ├─ documents: map[uri]*Document                │  │
-│  │      ├─ cursors: map[clientID]*CursorState          │  │
-│  │      └─ diagnostics: map[uri][]Diagnostic           │  │
-│  └─────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────┘
-         ▲                                    ▲
-         │ LSP (stdio)                        │ LSP (Unix socket)
-         │                                    │
-   ┌─────┴─────┐                        ┌─────┴─────┐
-   │  Neovim   │                        │   Crush   │
-   │  (nvim)   │◄── runs inside ───────►│ (in term) │
-   └───────────┘                        └───────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    crush-lsp daemon                         │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  Clients:                                             │  │
+│  │  ├─ neovim: LSP over Unix socket                      │  │
+│  │  ├─ crush:  LSP over Unix socket                      │  │
+│  │  └─ mcp:    MCP over Unix socket                      │  │
+│  │                                                       │  │
+│  │  State:                                               │  │
+│  │  ├─ documentState: map[uri]string (content cache)     │  │
+│  │  ├─ neovimOpenDocs: map[uri]bool (open files)         │  │
+│  │  ├─ cursorURI/Line/Column (last known position)       │  │
+│  │  └─ selectionText (last visual selection)             │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+         ▲                    ▲                    ▲
+         │                    │                    │
+   ┌─────┴─────┐        ┌─────┴─────┐        ┌─────┴─────┐
+   │  Neovim   │        │   Crush   │        │ MCP Client│
+   │  (LSP)    │        │   (LSP)   │        │ (AI tool) │
+   └───────────┘        └───────────┘        └───────────┘
 ```
+
+## How It Works
+
+1. **First client connects**: Daemon starts, listens on Unix socket
+2. **Neovim attaches**: Sends `initialize`, daemon tracks open files via `didOpen`/`didClose`
+3. **Crush edits a file**:
+   - If file is open in Neovim: send real diff via `workspace/applyEdit`
+   - If file is not open: send no-op edit (triggers open + highlight without doubling)
+4. **MCP client calls `editor_context`**: Returns cursor position + surrounding code
+5. **All clients disconnect**: Daemon shuts down
 
 ## Files
 
-| Path | Purpose |
-|------|---------|
-| `.crush/session` | Session metadata (in workspace) |
-| `$XDG_RUNTIME_DIR/crush-lsp/<id>.sock` | Unix socket (Linux) |
-| `$TMPDIR/crush-lsp-$UID/<id>.sock` | Unix socket (macOS) |
-| `~/.crush/logs/crush-lsp.log` | Log file |
+| Path                                   | Purpose                           |
+| -------------------------------------- | --------------------------------- |
+| `.crush/session`                       | Session metadata (workspace root) |
+| `$XDG_RUNTIME_DIR/crush-lsp/<id>.sock` | Unix socket (Linux)               |
+| `$TMPDIR/crush-lsp-$UID/<id>.sock`     | Unix socket (macOS)               |
 
 ## LSP Methods
 
-### Standard Methods (Work Automatically)
-
-| Method | Direction | Purpose |
-|--------|-----------|---------|
-| `textDocument/didOpen` | Client→Server | Open document |
-| `textDocument/didChange` | Client→Server | Document edits |
-| `textDocument/didClose` | Client→Server | Close document |
-| `textDocument/hover` | Client→Server | Hover info (+ cursor update) |
-| `textDocument/completion` | Client→Server | Completions (+ cursor update) |
-| `textDocument/definition` | Client→Server | Go to definition (+ cursor update) |
-| `workspace/applyEdit` | Server→Client | Apply edits from Crush |
-| `window/showDocument` | Server→Client | Focus file from Crush |
-
-### Custom Methods (Optional Plugin)
-
-| Method | Direction | Purpose |
-|--------|-----------|---------|
-| `crush/cursorMoved` | Client→Server | Real-time cursor position |
-| `crush/selectionChanged` | Client→Server | Selection changes |
-| `crush/documentChanged` | Server→Client | Broadcast document changes |
-| `crush/focusChanged` | Server→Client | Broadcast focus changes |
-| `crush/getState` | Client→Server | Query current editor state |
-| `crush/editFile` | Client→Server | Crush applies edits |
-| `crush/focusFile` | Client→Server | Crush changes focus |
-| `crush/subscribe` | Client→Server | Subscribe to events |
-
-## Security
-
-- Sockets are created in secure directories with `0700` permissions
-- On Linux: `$XDG_RUNTIME_DIR` (user-only tmpfs, cleared on logout)
-- On macOS: `$TMPDIR/crush-lsp-$UID/` (user-isolated)
-- Session files in `.crush/` are workspace-local
+| Method                   | Direction     | Purpose                    |
+| ------------------------ | ------------- | -------------------------- |
+| `textDocument/didOpen`   | Client→Server | Track open files           |
+| `textDocument/didChange` | Client→Server | Crush sends edits          |
+| `textDocument/didClose`  | Client→Server | Track closed files         |
+| `workspace/applyEdit`    | Server→Client | Apply edits to Neovim      |
+| `crush/cursorMoved`      | Client→Server | Real-time cursor position  |
+| `crush/selectionChanged` | Client→Server | Visual selection with text |
+| `crush/getEditorContext` | Client→Server | MCP tool queries state     |
 
 ## Development
 
-Based on [educationalsp](https://github.com/tjdevries/educationalsp) by TJ DeVries.
-
 ```bash
 # Build
-go build -o crush-lsp ./cmd/crush-lsp
+go build ./cmd/crush-lsp
 
 # Test
 go test ./...
 
-# Run standalone
-./crush-lsp
-
 # Run with logging
-CRUSH_LOG=/tmp/crush-lsp.log ./crush-lsp lsp
+crush-lsp --log /tmp/crush-lsp.log
 ```
 
 ## License
