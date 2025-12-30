@@ -47,25 +47,41 @@ The plugin provides:
 - Selection sync (`crush/selectionChanged`)
 - Crush terminal management (`:CrushToggle`, `<leader>cc`)
 
-## MCP Configuration
+## Crush Configuration
 
-Add to your MCP config (e.g., Crush's `mcp.json`):
+Add crush-lsp to your `~/.config/crush/crush.json`:
 
 ```json
 {
-  "mcpServers": {
-    "crush-lsp": {
+  "lsp": {
+    "*": {
       "command": "crush-lsp"
     }
+  },
+  "mcp": {
+    "crush-lsp": {
+      "command": "crush-lsp",
+      "type": "stdio"
+    }
+  },
+  "permissions": {
+    "allowed_tools": ["mcp_crush-lsp_editor_context"]
   }
 }
 ```
 
-This provides the `editor_context` tool for AI assistants to query:
+### Configuration Sections
 
-- Current file and cursor position
-- Surrounding code context (5 lines before/after)
-- Selected text (if any)
+| Section                     | Purpose                                                      |
+| --------------------------- | ------------------------------------------------------------ |
+| `lsp.*`                     | Fallback LSP for all file types, enabling Crush↔Neovim sync |
+| `mcp.crush-lsp`             | Registers the `editor_context` MCP tool                      |
+| `permissions.allowed_tools` | Whitelists the tool so Crush can use it without prompting    |
+
+### What This Enables
+
+- **LSP integration**: Crush edits sync to Neovim buffers in real-time
+- **MCP `editor_context` tool**: AI can query current file, cursor position, surrounding code, and selection
 
 ## Architecture
 
