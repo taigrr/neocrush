@@ -135,7 +135,3 @@ go test ./...
 # Run with logging
 crush-lsp --log /tmp/crush-lsp.log
 ```
-
-## License
-
-MIT
