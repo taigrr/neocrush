@@ -758,6 +758,14 @@ func computeLineEdits(oldText, newText string) []map[string]any {
 	newStart := prefixLen
 	newEnd := len(newLines) - suffixLen
 
+	// Clamp to valid ranges to prevent highlight going past buffer length
+	if oldEnd > len(oldLines) {
+		oldEnd = len(oldLines)
+	}
+	if newEnd > len(newLines) {
+		newEnd = len(newLines)
+	}
+
 	if oldStart >= oldEnd && newStart >= newEnd {
 		// No changes
 		return nil
