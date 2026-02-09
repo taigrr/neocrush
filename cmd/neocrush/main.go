@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/fang"
+	"github.com/spf13/cobra"
 	"github.com/taigrr/neocrush/internal/session"
 	"github.com/taigrr/neocrush/rpc"
 )
@@ -23,31 +24,60 @@ import (
 var version = "0.2.7"
 
 func main() {
-	logPath := flag.String("log", "", "Log file path")
-	showVersion := flag.Bool("version", false, "Show version")
-	showHelp := flag.Bool("help", false, "Show help")
-	daemonMode := flag.Bool("daemon", false, "Run as daemon (internal use)")
-	flag.Parse()
+	var logPath string
+	var daemonMode bool
 
-	if *showVersion {
-		fmt.Printf("neocrush version %s\n", version)
-		return
+	rootCmd := &cobra.Command{
+		Use:   "neocrush",
+		Short: "LSP/MCP multiplexed server for Crush and Neovim",
+		Long: `Runs as an LSP server that synchronizes state between Neovim and Crush,
+and as an MCP server providing editor context to AI tools.
+
+Protocol is auto-detected from the first message:
+  - LSP: Content-Length header (from Neovim/Crush LSP clients)
+  - MCP: Newline-delimited JSON (from AI tools like Claude)
+
+On first run, starts a background daemon and connects to it.
+Subsequent clients connect to the same daemon.
+Daemon exits when all clients disconnect.
+
+Client identification is automatic via the LSP initialize request.
+Messages from Neovim are forwarded to Crush and vice versa.
+
+MCP Tools:
+  editor_context   Get cursor position, surrounding code, and active file
+  show_locations   Display code locations with AI explanations in Telescope
+
+Configuration:
+  Neovim: cmd = { "neocrush" }
+  Crush:  { "lsp": { "command": "neocrush" } }
+  MCP:    { "command": "neocrush" }
+
+Files:
+  .crush/session               Session info (workspace root)
+  $XDG_RUNTIME_DIR/neocrush/   Sockets (Linux)
+  $TMPDIR/neocrush-$UID/       Sockets (macOS)`,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger := getLogger(logPath)
+
+			if daemonMode {
+				runDaemon(logger)
+				return nil
+			}
+
+			runClient(logger)
+			return nil
+		},
 	}
 
-	if *showHelp {
-		printUsage()
-		return
+	rootCmd.Flags().StringVar(&logPath, "log", "", "Log file path")
+	rootCmd.Flags().BoolVar(&daemonMode, "daemon", false, "Run as daemon (internal use)")
+	_ = rootCmd.Flags().MarkHidden("daemon")
+
+	if err := fang.Execute(context.Background(), rootCmd, fang.WithVersion(version)); err != nil {
+		os.Exit(1)
 	}
-
-	logger := getLogger(*logPath)
-
-	if *daemonMode {
-		runDaemon(logger)
-		return
-	}
-
-	// Normal mode: ensure daemon is running, then connect
-	runClient(logger)
 }
 
 func runClient(logger *log.Logger) {
@@ -320,7 +350,6 @@ func (d *Daemon) handleClient(conn net.Conn) {
 			if method == "crush/getEditorContext" {
 				d.handleGetEditorContext(content, conn)
 			} else if method == "crush/showLocations" {
-				d.logger.Printf("Received crush/showLocations, forwarding to Neovim")
 				d.forwardToNeovim(msg)
 			}
 			continue
@@ -428,7 +457,7 @@ func (d *Daemon) handleInitialize(msg []byte, conn net.Conn) (string, error) {
 	}
 
 	// Identify client first to determine capabilities
-	clientName := d.identifyClient(msg)
+	clientName := identifyClientName(req.Params.ClientInfo.Name)
 
 	// Different capabilities for different clients
 	var changeSync int
@@ -466,79 +495,23 @@ func (d *Daemon) handleInitialize(msg []byte, conn net.Conn) (string, error) {
 		return "", err
 	}
 
-	// Identify client
-	name := req.Params.ClientInfo.Name
-	switch {
-	case contains(name, "vim") || contains(name, "nvim") || contains(name, "Neovim"):
-		return "neovim", nil
-	case contains(name, "crush") || contains(name, "Crush") || contains(name, "powernap"):
-		return "crush", nil
-	default:
-		if name == "" {
-			return "unknown", nil
-		}
-		return name, nil
-	}
+	return clientName, nil
 }
 
-func (d *Daemon) identifyClient(msg []byte) string {
-	method, content, err := rpc.DecodeMessage(msg)
-	if err != nil {
-		return ""
-	}
-
-	if method != "initialize" {
-		return ""
-	}
-
-	var req struct {
-		Params struct {
-			ClientInfo struct {
-				Name string `json:"name"`
-			} `json:"clientInfo"`
-		} `json:"params"`
-	}
-
-	if err := json.Unmarshal(content, &req); err != nil {
-		return ""
-	}
-
-	name := req.Params.ClientInfo.Name
-	// Normalize: anything with "vim" -> "neovim", anything with "crush/powernap" -> "crush"
+// identifyClientName normalizes client names from LSP initialize requests.
+func identifyClientName(name string) string {
+	nameLower := strings.ToLower(name)
 	switch {
-	case contains(name, "vim") || contains(name, "nvim") || contains(name, "Neovim"):
+	case strings.Contains(nameLower, "vim") || strings.Contains(nameLower, "nvim") || strings.Contains(nameLower, "neovim"):
 		return "neovim"
-	case contains(name, "crush") || contains(name, "Crush") || contains(name, "powernap"):
+	case strings.Contains(nameLower, "crush") || strings.Contains(nameLower, "powernap"):
 		return "crush"
 	default:
-		// Unknown client, use the name as-is
+		if name == "" {
+			return "unknown"
+		}
 		return name
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsLower(s, substr))
-}
-
-func containsLower(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if toLower(s[i:i+len(substr)]) == toLower(substr) {
-			return true
-		}
-	}
-	return false
-}
-
-func toLower(s string) string {
-	b := make([]byte, len(s))
-	for i := range s {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		b[i] = c
-	}
-	return string(b)
 }
 
 func (d *Daemon) forwardToPeer(fromClient string, msg []byte) {
@@ -587,11 +560,8 @@ func (d *Daemon) forwardToNeovim(msg []byte) {
 		return
 	}
 
-	d.logger.Printf("Forwarding %d bytes to Neovim", len(msg))
 	if _, err := neovim.Write(msg); err != nil {
 		d.logger.Printf("Failed to forward to neovim: %v", err)
-	} else {
-		d.logger.Printf("Successfully forwarded to Neovim")
 	}
 }
 
@@ -1070,47 +1040,6 @@ func bridgeConnections(stdin io.Reader, stdout io.Writer, conn net.Conn, logger 
 	}()
 
 	<-errChan
-}
-
-func printUsage() {
-	fmt.Println(`neocrush - LSP/MCP multiplexed server for Crush and Neovim
-
-USAGE:
-    neocrush [OPTIONS]
-
-OPTIONS:
-    --log FILE    Log file path
-    --version     Show version
-    --help        Show this help
-
-DESCRIPTION:
-    Runs as an LSP server that synchronizes state between Neovim and Crush,
-    and as an MCP server providing editor context to AI tools.
-    
-    Protocol is auto-detected from the first message:
-    - LSP: Content-Length header (from Neovim/Crush LSP clients)
-    - MCP: Newline-delimited JSON (from AI tools like Claude)
-    
-    On first run, starts a background daemon and connects to it.
-    Subsequent clients connect to the same daemon.
-    Daemon exits when all clients disconnect.
-    
-    Client identification is automatic via the LSP initialize request.
-    Messages from Neovim are forwarded to Crush and vice versa.
-
-MCP TOOLS:
-    editor_context    Get current cursor position, surrounding code,
-                      and active file from Neovim
-
-CONFIGURATION:
-    Neovim: Add to LSP config with cmd = { "neocrush" }
-    Crush:  Add to crush.json lsp section with command = "neocrush"
-    MCP:    Add to mcp config with command = "neocrush"
-
-FILES:
-    .crush/session              Session info (in workspace root)
-    $XDG_RUNTIME_DIR/neocrush/ Sockets (Linux)
-    $TMPDIR/neocrush-$UID/     Sockets (macOS)`)
 }
 
 func getLogger(path string) *log.Logger {

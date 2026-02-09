@@ -230,34 +230,11 @@ func (m *MCPServer) requestEditorState() (EditorContextOutput, error) {
 	return resp.Result, nil
 }
 
-// readerStdio wraps a reader with stdout for MCP transport.
-type readerStdio struct {
-	reader io.Reader
-}
-
-func (r *readerStdio) Read(p []byte) (n int, err error) {
-	return r.reader.Read(p)
-}
-
-func (r *readerStdio) Write(p []byte) (n int, err error) {
-	return os.Stdout.Write(p)
-}
-
-func (r *readerStdio) Close() error {
-	return nil
-}
-
 // RunWithReader starts the MCP server using a custom reader for stdin.
 func (m *MCPServer) RunWithReader(ctx context.Context, reader *bufio.Reader) error {
-	// Create a transport that uses our buffered reader instead of os.Stdin
-	transport := &mcp.StdioTransport{}
-
 	// The StdioTransport uses os.Stdin/os.Stdout directly, so we need to
 	// replace os.Stdin temporarily. This is a bit hacky but the SDK doesn't
 	// expose a way to provide a custom reader.
-	//
-	// Actually, let's just use the regular Run since we've already peeked.
-	// The buffered reader should work fine as long as we don't double-read.
 
 	// Create a pipe to feed our buffered data
 	pipeReader, pipeWriter := io.Pipe()
@@ -284,7 +261,7 @@ func (m *MCPServer) RunWithReader(ctx context.Context, reader *bufio.Reader) err
 		r.Close()
 	}()
 
-	return m.server.Run(ctx, transport)
+	return m.server.Run(ctx, &mcp.StdioTransport{})
 }
 
 // Run starts the MCP server using stdio transport.
