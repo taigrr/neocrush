@@ -79,30 +79,27 @@ func NewMCPServer(daemonConn net.Conn) *MCPServer {
 	// Add the editor_context tool
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "editor_context",
-		Description: "Get the current editor context including cursor position, surrounding code, and active file from Neovim",
+		Description: "Get the current editor context including cursor position, surrounding code, and active file from Neovim, useful for when the user asks you about 'this' or 'here' (provides editor state context, i.e. open file and cursor location.)",
 	}, mcpServer.editorContextHandler)
 
 	// Add the show_locations tool
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "show_locations",
-		Description: `Display a list of code locations in Neovim with AI-generated explanations.
+		Description: `Nvim navigaion tool. Call this tool when the user asks you to show them a list of code or text locations.
 
-Opens a custom Telescope picker with three panes:
+Calling this tool will open a custom Telescope picker with three panes:
 - Left: List of locations (filename:line)
-- Right: File preview
+- Right: Live file preview
 - Bottom: Your explanation of why this location is relevant
 
-Use this after analyzing code to show the user relevant locations with context.
-Press <C-q> in the picker to send all items to the quickfix list.
-
 Each item should include:
-- filename: absolute or relative path to the file
-- lnum: 1-indexed line number
-- text: the relevant code snippet at this location
+- filename
+- lnum: (1-indexed line number)
+- text: the relevant snippet at this location
 - note: YOUR explanation of WHY this location matters for the current task (critical - be specific)
 - type: N (note), I (info), W (warning), E (error) - defaults to N
 
-The note field is the key differentiator - explain WHY this location is relevant to what the user asked, not just WHAT the code does.`,
+The note field is the key differentiator - explain WHY this location is relevant to what the user asked, not just WHAT the code does; use this after analyzing code to show the user relevant locations with context.`,
 	}, mcpServer.showLocationsHandler)
 
 	return mcpServer
