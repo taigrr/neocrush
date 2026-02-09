@@ -294,11 +294,11 @@ func (d *Daemon) handleClient(conn net.Conn) {
 		// Check for MCP-specific requests first (these don't require identification)
 		method, content, _ := rpc.DecodeMessage(msg)
 
-		// Handle crush/getEditorContext request from MCP client (no identification needed)
-		if method == "crush/getEditorContext" {
+		// Handle MCP-specific methods (these don't require prior identification)
+		if method == "crush/getEditorContext" || method == "crush/showLocations" {
 			if clientName == "" {
 				clientName = "mcp"
-				d.logger.Printf("Client identified: %s (from getEditorContext)", clientName)
+				d.logger.Printf("Client identified: %s (from %s)", clientName, method)
 				d.mu.Lock()
 				d.clients[clientName] = conn
 				d.mu.Unlock()
@@ -316,7 +316,13 @@ func (d *Daemon) handleClient(conn net.Conn) {
 					}
 				}()
 			}
-			d.handleGetEditorContext(content, conn)
+
+			if method == "crush/getEditorContext" {
+				d.handleGetEditorContext(content, conn)
+			} else if method == "crush/showLocations" {
+				d.logger.Printf("Received crush/showLocations, forwarding to Neovim")
+				d.forwardToNeovim(msg)
+			}
 			continue
 		}
 
@@ -567,6 +573,25 @@ func (d *Daemon) forwardToPeer(fromClient string, msg []byte) {
 
 	if _, err := peer.Write(msg); err != nil {
 		d.logger.Printf("Failed to forward to %s: %v", peerName, err)
+	}
+}
+
+// forwardToNeovim sends a message directly to Neovim (used for MCP->Neovim forwarding).
+func (d *Daemon) forwardToNeovim(msg []byte) {
+	d.mu.RLock()
+	neovim, ok := d.clients["neovim"]
+	d.mu.RUnlock()
+
+	if !ok {
+		d.logger.Printf("Neovim not connected, cannot forward")
+		return
+	}
+
+	d.logger.Printf("Forwarding %d bytes to Neovim", len(msg))
+	if _, err := neovim.Write(msg); err != nil {
+		d.logger.Printf("Failed to forward to neovim: %v", err)
+	} else {
+		d.logger.Printf("Successfully forwarded to Neovim")
 	}
 }
 
