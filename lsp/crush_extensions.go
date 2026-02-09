@@ -179,3 +179,26 @@ type SubscribeResponse struct {
 type SubscribeResult struct {
 	Subscribed bool `json:"subscribed"`
 }
+
+// ShowLocationsNotification is sent to Neovim to display locations in Telescope.
+// Method: crush/showLocations
+type ShowLocationsNotification struct {
+	Notification
+	Params ShowLocationsParams `json:"params"`
+}
+
+// ShowLocationsParams contains the locations to display.
+type ShowLocationsParams struct {
+	Title string         `json:"title"`
+	Items []LocationItem `json:"items"`
+}
+
+// LocationItem represents a single location with AI-generated context.
+type LocationItem struct {
+	Filename string `json:"filename"`          // Absolute or relative path
+	Line     int    `json:"lnum"`              // 1-indexed line number
+	Col      int    `json:"col,omitempty"`     // 1-indexed column (optional)
+	Text     string `json:"text"`              // The code snippet at this location
+	Note     string `json:"note"`              // AI explanation of why this location matters
+	Type     string `json:"type,omitempty"`    // E/W/I/N (error/warn/info/note), default N
+}

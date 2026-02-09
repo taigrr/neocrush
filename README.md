@@ -9,7 +9,7 @@ When Crush edits files, this server enables:
 - **Live buffer updates**: Crush edits appear instantly in Neovim with flash highlights
 - **Cursor/selection tracking**: AI tools can see your current position and selected text
 - **Auto-focus**: Edited files open automatically in Neovim
-- **MCP integration**: Provides `editor_context` tool for AI assistants
+- **MCP integration**: Provides `editor_context` and `show_locations` tools for AI assistants
 
 ## Features
 
@@ -65,7 +65,10 @@ Add neocrush to your `~/.config/crush/crush.json`:
     }
   },
   "permissions": {
-    "allowed_tools": ["mcp_neocrush_editor_context"]
+    "allowed_tools": [
+      "mcp_neocrush_editor_context",
+      "mcp_neocrush_show_locations"
+    ]
   }
 }
 ```
@@ -82,6 +85,7 @@ Add neocrush to your `~/.config/crush/crush.json`:
 
 - **LSP integration**: Crush edits sync to Neovim buffers in real-time
 - **MCP `editor_context` tool**: AI can query current file, cursor position, surrounding code, and selection
+- **MCP `show_locations` tool**: AI can present analyzed code locations with explanations in a Telescope picker
 
 ## Architecture
 
@@ -138,6 +142,7 @@ Add neocrush to your `~/.config/crush/crush.json`:
 | `crush/cursorMoved`      | Client→Server | Real-time cursor position  |
 | `crush/selectionChanged` | Client→Server | Visual selection with text |
 | `crush/getEditorContext` | Client→Server | MCP tool queries state     |
+| `crush/showLocations`    | Server→Client | Display AI-annotated locations |
 
 ## Development
 

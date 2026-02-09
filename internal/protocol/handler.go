@@ -142,6 +142,8 @@ func (h *Handler) HandleMessage(client *Client, method string, content []byte) e
 		return h.handleFocusFile(client, content)
 	case "crush/subscribe":
 		return h.handleSubscribe(client, content)
+	case "crush/showLocations":
+		return h.handleShowLocations(client, content)
 
 	default:
 		h.logger.Printf("Unknown method: %s", method)
@@ -592,6 +594,35 @@ func (h *Handler) handleSubscribe(client *Client, content []byte) error {
 	}
 
 	return client.Transport.Write(response)
+}
+
+// handleShowLocations forwards crush/showLocations to Neovim for display.
+func (h *Handler) handleShowLocations(client *Client, content []byte) error {
+	var notification lsp.ShowLocationsNotification
+	if err := json.Unmarshal(content, &notification); err != nil {
+		return err
+	}
+
+	// Forward to Neovim
+	if h.neovimClient != nil {
+		return h.sendShowLocations(h.neovimClient, notification.Params)
+	}
+
+	h.logger.Printf("No Neovim client connected, cannot show locations")
+	return nil
+}
+
+// sendShowLocations sends crush/showLocations notification to Neovim.
+func (h *Handler) sendShowLocations(client *Client, params lsp.ShowLocationsParams) error {
+	notification := lsp.ShowLocationsNotification{
+		Notification: lsp.Notification{
+			RPC:    "2.0",
+			Method: "crush/showLocations",
+		},
+		Params: params,
+	}
+
+	return client.Transport.Write(notification)
 }
 
 // sendDiagnostics sends diagnostics to a client.

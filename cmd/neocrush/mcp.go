@@ -17,6 +17,28 @@ import (
 // EditorContextInput is the input for the editor_context tool.
 type EditorContextInput struct{}
 
+// ShowLocationsInput is the input for the show_locations tool.
+type ShowLocationsInput struct {
+	Title string         `json:"title"`
+	Items []LocationItem `json:"items"`
+}
+
+// LocationItem represents a single location with AI-generated context.
+type LocationItem struct {
+	Filename string `json:"filename"`
+	Line     int    `json:"lnum"`
+	Col      int    `json:"col,omitempty"`
+	Text     string `json:"text"`
+	Note     string `json:"note"`
+	Type     string `json:"type,omitempty"`
+}
+
+// ShowLocationsOutput is the output for the show_locations tool.
+type ShowLocationsOutput struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
 // EditorContextOutput is the output for the editor_context tool.
 type EditorContextOutput struct {
 	URI           string `json:"uri"`
@@ -60,6 +82,29 @@ func NewMCPServer(daemonConn net.Conn) *MCPServer {
 		Description: "Get the current editor context including cursor position, surrounding code, and active file from Neovim",
 	}, mcpServer.editorContextHandler)
 
+	// Add the show_locations tool
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "show_locations",
+		Description: `Display a list of code locations in Neovim with AI-generated explanations.
+
+Opens a custom Telescope picker with three panes:
+- Left: List of locations (filename:line)
+- Right: File preview
+- Bottom: Your explanation of why this location is relevant
+
+Use this after analyzing code to show the user relevant locations with context.
+Press <C-q> in the picker to send all items to the quickfix list.
+
+Each item should include:
+- filename: absolute or relative path to the file
+- lnum: 1-indexed line number
+- text: the relevant code snippet at this location
+- note: YOUR explanation of WHY this location matters for the current task (critical - be specific)
+- type: N (note), I (info), W (warning), E (error) - defaults to N
+
+The note field is the key differentiator - explain WHY this location is relevant to what the user asked, not just WHAT the code does.`,
+	}, mcpServer.showLocationsHandler)
+
 	return mcpServer
 }
 
@@ -72,6 +117,51 @@ func (m *MCPServer) editorContextHandler(ctx context.Context, req *mcp.CallToolR
 	}
 
 	return nil, state, nil
+}
+
+// showLocationsHandler handles the show_locations tool call.
+func (m *MCPServer) showLocationsHandler(ctx context.Context, req *mcp.CallToolRequest, input ShowLocationsInput) (*mcp.CallToolResult, ShowLocationsOutput, error) {
+	if len(input.Items) == 0 {
+		return nil, ShowLocationsOutput{Success: false, Error: "no items provided"}, nil
+	}
+
+	// Send to daemon which will forward to Neovim
+	err := m.sendShowLocations(input.Title, input.Items)
+	if err != nil {
+		return nil, ShowLocationsOutput{Success: false, Error: err.Error()}, nil
+	}
+
+	return nil, ShowLocationsOutput{Success: true}, nil
+}
+
+// sendShowLocations sends a crush/showLocations notification to the daemon.
+func (m *MCPServer) sendShowLocations(title string, items []LocationItem) error {
+	notification := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "crush/showLocations",
+		"params": map[string]any{
+			"title": title,
+			"items": items,
+		},
+	}
+
+	notifBytes, err := json.Marshal(notification)
+	if err != nil {
+		return err
+	}
+
+	// Format as LSP message with Content-Length header
+	msg := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(notifBytes), notifBytes)
+
+	if err := m.daemonConn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+
+	if _, err := m.daemonConn.Write([]byte(msg)); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // requestEditorState sends a custom request to the daemon to get editor state.
