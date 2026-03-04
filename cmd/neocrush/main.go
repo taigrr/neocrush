@@ -336,11 +336,12 @@ func (d *Daemon) handleClient(conn net.Conn) {
 				defer func() {
 					d.mu.Lock()
 					delete(d.clients, clientName)
+					noClients := len(d.clients) == 0
 					d.mu.Unlock()
 					d.logger.Printf("Client disconnected: %s", clientName)
 
 					// Exit daemon if no clients remain
-					if len(d.clients) == 0 {
+					if noClients {
 						d.logger.Println("No clients remaining, shutting down")
 						d.listener.Close()
 					}
@@ -367,11 +368,12 @@ func (d *Daemon) handleClient(conn net.Conn) {
 				defer func() {
 					d.mu.Lock()
 					delete(d.clients, clientName)
+					noClients := len(d.clients) == 0
 					d.mu.Unlock()
 					d.logger.Printf("Client disconnected: %s", clientName)
 
 					// Exit daemon if no clients remain
-					if len(d.clients) == 0 {
+					if noClients {
 						d.logger.Println("No clients remaining, shutting down")
 						d.listener.Close()
 					}

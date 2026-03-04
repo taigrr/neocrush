@@ -27,7 +27,7 @@ func TestDecode(t *testing.T) {
 	}
 
 	if contentLength != 15 {
-		t.Fatalf("Expected: 16, Got: %d", contentLength)
+		t.Fatalf("Expected: 15, Got: %d", contentLength)
 	}
 
 	if method != "hi" {

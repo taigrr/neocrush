@@ -16,12 +16,7 @@ import (
 	"github.com/taigrr/neocrush/rpc"
 )
 
-func TestIdentifyClient(t *testing.T) {
-	d := &Daemon{
-		logger:  log.New(io.Discard, "", 0),
-		clients: make(map[string]net.Conn),
-	}
-
+func TestIdentifyClientName(t *testing.T) {
 	tests := []struct {
 		name     string
 		clientID string
@@ -36,13 +31,12 @@ func TestIdentifyClient(t *testing.T) {
 		{"crush lowercase", "crush", "crush"},
 		{"Crush with version", "Crush 1.0.0", "crush"},
 		{"Unknown client", "vscode", "vscode"},
-		{"Empty client", "", ""},
+		{"Empty client", "", "unknown"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := createInitializeMessage(tt.clientID)
-			result := d.identifyClient([]byte(msg))
+			result := identifyClientName(tt.clientID)
 			if result != tt.expected {
 				t.Errorf("Expected %q, got %q", tt.expected, result)
 			}
@@ -50,23 +44,17 @@ func TestIdentifyClient(t *testing.T) {
 	}
 }
 
-func TestIdentifyClient_NonInitialize(t *testing.T) {
-	d := &Daemon{
-		logger:  log.New(io.Discard, "", 0),
-		clients: make(map[string]net.Conn),
+func TestIdentifyClientName_EdgeCases(t *testing.T) {
+	// Test powernap alias maps to crush
+	result := identifyClientName("PowerNap")
+	if result != "crush" {
+		t.Errorf("Expected %q, got %q", "crush", result)
 	}
 
-	// Test with non-initialize message
-	msg := rpc.EncodeMessage(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "textDocument/didOpen",
-		"params":  map[string]any{},
-	})
-
-	result := d.identifyClient([]byte(msg))
-	if result != "" {
-		t.Errorf("Expected empty string for non-initialize message, got %q", result)
+	// Unknown returns the original name
+	result = identifyClientName("vscode")
+	if result != "vscode" {
+		t.Errorf("Expected %q, got %q", "vscode", result)
 	}
 }
 
@@ -302,28 +290,25 @@ func TestDaemonClientDisconnect(t *testing.T) {
 	}
 }
 
-func TestContainsLower(t *testing.T) {
+func TestIdentifyClientName_CaseInsensitive(t *testing.T) {
+	// Verify case-insensitive matching via identifyClientName
 	tests := []struct {
-		s      string
-		substr string
-		want   bool
+		input    string
+		expected string
 	}{
-		{"Neovim", "vim", true},
-		{"NEOVIM", "vim", true},
-		{"neovim", "VIM", true},
-		{"nvim", "vim", true},
-		{"Crush", "crush", true},
-		{"CRUSH", "crush", true},
-		{"vscode", "vim", false},
-		{"", "vim", false},
-		{"vim", "", true},
+		{"NEOVIM", "neovim"},
+		{"NeOvIm", "neovim"},
+		{"CRUSH", "crush"},
+		{"CrUsH", "crush"},
+		{"NVIM", "neovim"},
+		{"VIM", "neovim"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.s+"_"+tt.substr, func(t *testing.T) {
-			got := contains(tt.s, tt.substr)
-			if got != tt.want {
-				t.Errorf("contains(%q, %q) = %v, want %v", tt.s, tt.substr, got, tt.want)
+		t.Run(tt.input, func(t *testing.T) {
+			got := identifyClientName(tt.input)
+			if got != tt.expected {
+				t.Errorf("identifyClientName(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
 	}
