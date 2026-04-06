@@ -195,10 +195,10 @@ type ShowLocationsParams struct {
 
 // LocationItem represents a single location with AI-generated context.
 type LocationItem struct {
-	Filename string `json:"filename"`          // Absolute or relative path
-	Line     int    `json:"lnum"`              // 1-indexed line number
-	Col      int    `json:"col,omitempty"`     // 1-indexed column (optional)
-	Text     string `json:"text"`              // The code snippet at this location
-	Note     string `json:"note"`              // AI explanation of why this location matters
-	Type     string `json:"type,omitempty"`    // E/W/I/N (error/warn/info/note), default N
+	Filename string `json:"filename"`       // Absolute or relative path
+	Line     int    `json:"lnum"`           // 1-indexed line number
+	Col      int    `json:"col,omitempty"`  // 1-indexed column (optional)
+	Text     string `json:"text"`           // The code snippet at this location
+	Note     string `json:"note"`           // AI explanation of why this location matters
+	Type     string `json:"type,omitempty"` // E/W/I/N (error/warn/info/note), default N
 }
