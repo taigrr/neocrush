@@ -1,6 +1,9 @@
 # neocrush
 
-LSP/MCP server for synchronizing editor state between [Crush](https://github.com/charmbracelet/crush) (Charm's AI coding agent) and Neovim.
+> This repository is archived. The active functionality now lives in [taigrr/crush](https://github.com/taigrr/crush).
+> Use that repo for current development and releases.
+
+LSP/MCP server for synchronizing editor state between [my Crush fork](https://github.com/taigrr/crush) (Tai's Crush fork) and Neovim.
 
 ## Overview
 
